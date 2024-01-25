@@ -10,8 +10,8 @@
 <link href="index_files/libs/quarto-html/quarto-syntax-highlighting.css" rel="stylesheet" id="quarto-text-highlighting-styles"><meta charset="utf-8">
   <meta name="generator" content="quarto-1.5.3">
 
-  <meta name="author" content="Tom Seimandi">
-  <title>Implémentation du classifieur “fastText” avec Pytorch</title>
+  <meta name="author" content="">
+  <title>Implémentation du classifieur fastText avec Pytorch</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
@@ -394,17 +394,11 @@
     <div class="slides">
 
 <section id="title-slide" data-background-size="contain" class="quarto-title-block center">
-  <h1 class="title">Implémentation du classifieur “fastText” avec Pytorch</h1>
+  <h1 class="title">Implémentation du classifieur <em>fastText</em> avec Pytorch</h1>
 
 <div class="quarto-title-authors">
-<div class="quarto-title-author">
-<div class="quarto-title-author-name">
-Tom Seimandi 
-</div>
-</div>
 </div>
 
-  <p class="date">1 juillet 2026</p>
 </section>
 <section id="contexte" class="slide level2" data-background-size="contain">
 <h2>Contexte</h2>
@@ -437,7 +431,7 @@ Tom Seimandi
 <img data-src="img/diag-fasttext-torch.png" class="r-stretch"></section>
 <section id="implémentation-avec-pytorch-1" class="slide level2" data-background-size="contain">
 <h2>Implémentation avec Pytorch</h2>
-<div id="895c7f51" class="cell" data-execution_count="1">
+<div id="37757439" class="cell" data-execution_count="1">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href=""></a><span class="kw">class</span> Model(nn.Module):</span>
 <span id="cb1-2"><a href=""></a></span>
 <span id="cb1-3"><a href=""></a>    <span class="kw">def</span> <span class="fu">__init__</span>(</span>
@@ -491,6 +485,7 @@ Tom Seimandi
 <section id="todos" class="slide level2" data-background-size="contain">
 <h2>TODOs</h2>
 <ul>
+<li><span class="orange"><strong>Implémentation plus naturelle</strong></span></li>
 <li><span class="orange"><strong>Procédure d’optimisation</strong></span></li>
 <li><span class="orange"><strong>Benchmark avec fastText</strong></span></li>
 </ul>
