@@ -1,22 +1,16 @@
 import logging
+import os
 import time
 
 import numpy as np
-import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import (
-    EarlyStopping,
-    LearningRateMonitor,
-    ModelCheckpoint,
-)
-from pytorch_lightning.utilities import rank_zero_only
 from torch.optim import SGD, Adam
 
 from checkers import check_X, check_Y
 from dataset import FastTextModelDataset
-from lightning_module import FastTextModule
 from pytorch_model import FastTextModel
 from tokenizer import NGramTokenizer
+from trainer.trainer import Trainer
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +20,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[logging.StreamHandler()],
 )
-
-
-@rank_zero_only
-def print_progress(*args, **kwargs):
-    print(*args, **kwargs)
-
-
-pl.utilities.seed.seed_everything(42)  # Optional
 
 
 class torchFastText:
@@ -59,6 +45,7 @@ class torchFastText:
         self.trained = False
         self.num_categorical_features = None
         self.num_classes = None
+        self.training_config = None
 
     def build_tokenizer(self, training_text):
         self.tokenizer = NGramTokenizer(
@@ -95,25 +82,41 @@ class torchFastText:
         y_val: np.ndarray,
         num_epochs: int,
         batch_size: int,
+        device: str = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
         cpu_run: bool = False,
         num_workers: int = 12,
         optimizer=None,
         optimizer_params=None,
         lr: float = None,
-        scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau,
-        patience_scheduler: int = 3,
+        scheduler=None,
         loss=torch.nn.CrossEntropyLoss(),
+        early_stopping: bool = True,
         patience_train=3,
+        patience_scheduler=3,
+        save_every_n_epoch: int = None,
+        save_dir: str = None,
+        check_val_every_n_epoch: int = 1,
         verbose: bool = False,
     ):
-        ##### Formatting exception handling #####
+        if save_dir is None:
+            self.save_dir = "torch_fastText_{}/".format(time.strftime("%Y%m%d-%H%M"))
+        else:
+            self.save_dir = save_dir
 
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
+            if verbose:
+                logger.info(
+                    f"Created directory {self.save_dir}, checkpoints and models will be saved there."
+                )
+
+        ##### Formatting exception handling #####
         assert isinstance(loss, torch.nn.Module), "loss must be a PyTorch loss function."
         assert optimizer is None or optimizer.__module__.startswith(
             "torch.optim"
         ), "optimizer must be a PyTorch optimizer."
         assert (
-            scheduler.__module__ == "torch.optim.lr_scheduler"
+            scheduler is None or scheduler.__module__ == "torch.optim.lr_scheduler"
         ), "scheduler must be a PyTorch scheduler."
 
         # checking right format for inputs
@@ -190,65 +193,41 @@ class torchFastText:
         if optimizer is None:
             assert lr is not None, "Please provide a learning rate."
             if not self.sparse:
-                self.optimizer = Adam
+                self.optimizer = Adam(self.pytorch_model.parameters(), lr=lr)
             else:
-                self.optimizer = SGD
-            optimizer_params = {"lr": lr}
+                self.optimizer = SGD(self.pytorch_model.parameters(), lr=lr)
         else:
             self.optimizer = optimizer
-            if optimizer_params is None:
-                logger.warning("No optimizer parameters provided. Using default parameters.")
 
-        self.scheduler = scheduler
-        scheduler_params = {
-            "mode": "min",
-            "patience": patience_scheduler,
-        }
+        if scheduler is None:
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer, patience=patience_scheduler, factor=0.5, mode="min"
+            )
+            if verbose:
+                logger.info("Using ReduceLROnPlateau scheduler.")
+        else:
+            self.scheduler = scheduler
         self.loss = loss
 
-        # Lightning Module
-        module = FastTextModule(
+        # Trainer
+        self.trainer = Trainer(
             model=self.pytorch_model,
-            loss=self.loss,
+            num_epochs=num_epochs,
+            batch_size=batch_size,
+            device=self.device,
+            cpu_run=cpu_run,
+            num_workers=num_workers,
             optimizer=self.optimizer,
             optimizer_params=optimizer_params,
+            lr=lr,
             scheduler=self.scheduler,
-            scheduler_params=scheduler_params,
-            scheduler_interval="epoch",
-        )
-
-        if verbose:
-            logger.info("Lightning module successfully created.")
-
-        # Trainer callbacks
-        checkpoints = [
-            {
-                "monitor": "validation_loss",
-                "save_top_k": 1,
-                "save_last": False,
-                "mode": "min",
-            }
-        ]
-        callbacks = [ModelCheckpoint(**checkpoint) for checkpoint in checkpoints]
-        callbacks.append(
-            EarlyStopping(
-                monitor="validation_loss",
-                patience=patience_train,
-                mode="min",
-            )
-        )
-        callbacks.append(LearningRateMonitor(logging_interval="step"))
-
-        # Strategy
-        strategy = "auto"
-        # Trainer
-        self.trainer = pl.Trainer(
-            callbacks=callbacks,
-            max_epochs=num_epochs,
-            num_sanity_val_steps=2,
-            strategy=strategy,
-            log_every_n_steps=2,
-            enable_progress_bar=True,
+            loss=loss,
+            patience_train=patience_train,
+            save_every_n_epoch=save_every_n_epoch,
+            save_dir=self.save_dir,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            console_log=True,
+            verbose=verbose,
         )
 
         torch.cuda.empty_cache()
@@ -257,33 +236,12 @@ class torchFastText:
         if verbose:
             logger.info("Launching training...")
             start = time.time()
-        self.trainer.fit(module, train_dataloader, val_dataloader)
+        self.trainer.fit(train_dataloader, val_dataloader)
         if verbose:
             end = time.time()
             logger.info("Training done in {:.2f} seconds.".format(end - start))
 
-        # Load best model
-        self.best_model_path = self.trainer.checkpoint_callback.best_model_path
-        self.pytorch_model = FastTextModule.load_from_checkpoint(self.best_model_path).model.to(
-            "cpu"
-        )
         self.trained = True
-        self.pytorch_model.eval()
-
-    def load_from_checkpoint(self, path):
-        module = FastTextModule.load_from_checkpoint(path)
-        self.pytorch_model = module.model
-        self.tokenizer = self.pytorch_model.tokenizer
-
-        self.sparse = self.pytorch_model.sparse
-        self.num_buckets = self.tokenizer.num_buckets
-        self.embedding_dim = self.pytorch_model.embedding_dim
-        self.num_classes = self.pytorch_model.num_classes
-        self.min_count = self.tokenizer.min_count
-        self.min_n = self.tokenizer.min_n
-        self.max_n = self.tokenizer.max_n
-        self.len_word_ngrams = self.tokenizer.word_ngrams
-        self.no_cat_var = self.pytorch_model.no_cat_var
 
     def validate(self, X, Y, batch_size=256, num_workers=12):
         """
